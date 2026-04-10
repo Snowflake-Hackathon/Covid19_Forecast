@@ -7,7 +7,9 @@
 
 🖥️ **[Streamlit Dashboard (Snowflake)](https://app.snowflake.com/streamlit/sfeducationservices7/jmb13357/#/apps/njcrz73rv7cwnykde34b)**
 
-🎥 **Video Walkthrough**: [TODO — Add link after recording]
+🎥 **[Video Walkthrough](https://1drv.ms/v/c/feec73f19c5696a4/IQDZ4H-ExEpvQZOjG25upXIlAc1T61SHyqhEik8eHZWr2aM?e=yq38U3)**
+
+📑 **[Presentation Deck](https://1drv.ms/p/c/feec73f19c5696a4/IQCkP-q994-vQZwoIW0BCG7YAeUyOEj3Luj-pO6bLL-oSBk?e=SzJqNH)**
 
 ---
 
