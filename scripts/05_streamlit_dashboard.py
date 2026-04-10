@@ -120,7 +120,7 @@ st.markdown("---")
 st.subheader("Global Situation Overview")
 if not global_summary.empty:
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Countries Monitored", "15")
+    col1.metric("Countries Monitored", "14")
     col2.metric("High Risk", int(global_summary["HIGH_RISK_COUNT"].iloc[0]))
     col3.metric("Moderate Risk", int(global_summary["MODERATE_RISK_COUNT"].iloc[0]))
     col4.metric("Low Risk", int(global_summary["LOW_RISK_COUNT"].iloc[0]))
@@ -420,7 +420,7 @@ with tab6:
 
 # ── TAB 7: Data Profile + Fairness Note ──
 with tab7:
-    st.subheader("Data Profile — 15 Countries")
+    st.subheader("Data Profile")
 
     if not data_profile.empty:
         col1, col2, col3 = st.columns(3)
@@ -491,14 +491,14 @@ with tab9:
                                    │
     ┌──────────────────────────────▼──────────────────────────────────┐
     │  INT (Intermediate)     Cleaned, joined, gap-filled            │
-    │  ├── TARGET_COUNTRIES        15-country mapping view           │
+    │  ├── TARGET_COUNTRIES        14-country mapping view           │
     │  ├── DAILY_COUNTRY_SERIES    Pivoted daily time-series         │
     │  └── BASE_FILLED             Date-spine filled, forward-fill   │
     └──────────────────────────────┬──────────────────────────────────┘
                                    │
     ┌──────────────────────────────▼──────────────────────────────────┐
     │  MARTS (Consumption)    ML-ready features & outputs            │
-    │  ├── FEATURES_ENGINEERED     23 features, 15 countries         │
+    │  ├── FEATURES_ENGINEERED     23 features, 14 countries         │
     │  ├── FORECAST_OUTPUT         Actuals + 30-day projections      │
     │  ├── FORECAST_EVAL           MAPE/sMAPE/WMAPE per country      │
     │  ├── FEATURE_IMPORTANCE      ML model feature rankings         │

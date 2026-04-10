@@ -64,6 +64,7 @@ actual_stats AS (
     FROM MARTS.FEATURES_ENGINEERED f
     CROSS JOIN actual_bounds ab
     WHERE f.DATE > DATEADD('day', -60, ab.max_actual_date)
+      AND f.COUNTRY_REGION != 'Turkey'  -- dropped: 0 cases in training window
     GROUP BY f.COUNTRY_REGION
 ),
 
@@ -148,29 +149,30 @@ SELECT
     SNOWFLAKE.CORTEX.COMPLETE(
         'mistral-large2',
         CONCAT(
-            'You are a public health intelligence analyst. Write a briefing for a government health official who is NOT a data scientist.\n\n',
-            'COUNTRY: ', COUNTRY_REGION, '\n',
-            'DATA PERIOD: Last 60 days of confirmed COVID-19 data.\n\n',
-            'ACTUAL DATA:\n',
-            '- Total new cases in last 30 days: ', TO_VARCHAR(ROUND(cases_last_30d)), '\n',
-            '- Total new cases in previous 30 days: ', TO_VARCHAR(ROUND(cases_prev_30d)), '\n',
-            '- 30-day trend: ', TO_VARCHAR(pct_change_30d), '% change\n',
-            '- Deaths in last 30 days: ', TO_VARCHAR(ROUND(deaths_last_30d)), '\n',
-            '- Current daily average (7-day): ', TO_VARCHAR(latest_7d_avg_cases), ' cases/day\n',
-            '- Vaccination coverage: ', TO_VARCHAR(ROUND(vacc_coverage_pct, 1)), '% fully vaccinated\n\n',
-            'ML FORECAST (next 30 days):\n',
-            '- Predicted total cases: ', TO_VARCHAR(ROUND(forecast_30d_cases)), '\n',
-            '- Predicted daily average: ', TO_VARCHAR(forecast_daily_avg), ' cases/day\n',
-            '- Model accuracy (sMAPE): ', TO_VARCHAR(ROUND(avg_mape, 1)), '%\n\n',
-            'RISK TIER: ', RISK_TIER, '\n\n',
-            'INSTRUCTIONS:\n',
-            '- Write exactly 3-4 sentences.\n',
-            '- Sentence 1: State whether cases are rising, falling, or stable and by how much.\n',
-            '- Sentence 2: What the ML forecast projects for the next 30 days.\n',
-            '- Sentence 3: The risk level and one specific recommended action.\n',
-            '- Sentence 4 (optional): Note vaccination coverage if relevant.\n',
-            '- Use plain English. No percentages larger than the ones provided. No jargon.\n',
-            '- Do NOT invent numbers. Only use the data provided above.'
+            'You are a senior public health advisor writing a situational briefing for a government health minister who has no technical background. Your tone should be calm, authoritative, and action-oriented — like a WHO situation report, not a data dashboard.\n\n',
+            'Here is the latest intelligence for ', COUNTRY_REGION, ':\n',
+            '- Over the past month, ', TO_VARCHAR(ROUND(cases_last_30d)), ' new COVID-19 cases were recorded, ',
+            CASE
+                WHEN pct_change_30d > 20 THEN CONCAT('a sharp increase of ', TO_VARCHAR(pct_change_30d), '% compared to the previous month.')
+                WHEN pct_change_30d > 5 THEN CONCAT('a moderate increase of ', TO_VARCHAR(pct_change_30d), '% compared to the previous month.')
+                WHEN pct_change_30d > -5 THEN 'roughly in line with the previous month, indicating a stable situation.'
+                WHEN pct_change_30d > -20 THEN CONCAT('a decline of ', TO_VARCHAR(ABS(pct_change_30d)), '% compared to the previous month.')
+                ELSE CONCAT('a significant decline of ', TO_VARCHAR(ABS(pct_change_30d)), '% compared to the previous month.')
+            END, '\n',
+            '- Deaths in the past 30 days: ', TO_VARCHAR(ROUND(deaths_last_30d)), '\n',
+            '- The country currently averages about ', TO_VARCHAR(latest_7d_avg_cases), ' cases per day.\n',
+            '- ', TO_VARCHAR(ROUND(vacc_coverage_pct, 1)), '% of the population is fully vaccinated.\n',
+            '- Our ML forecasting model projects approximately ', TO_VARCHAR(ROUND(forecast_30d_cases)), ' cases over the next 30 days.\n',
+            '- This country is classified as ', RISK_TIER, ' risk.\n\n',
+            'TASK: Write a 4-5 sentence narrative briefing in the style of a WHO situation update. Requirements:\n',
+            '- Do NOT list numbers with bullet points or dashes. Weave them naturally into flowing prose.\n',
+            '- Open with the big picture: is the situation improving, stable, or deteriorating?\n',
+            '- Explain what this means for the healthcare system and public in practical terms.\n',
+            '- Include what the forecast suggests about the trajectory ahead.\n',
+            '- Close with one clear, specific recommended action for the health ministry.\n',
+            '- Write as if this will be read aloud in a cabinet meeting. Professional, concise, no jargon.\n',
+            '- Do NOT start with "Based on the data" or "According to". Start with the country name or situation directly.\n',
+            '- Do NOT invent any numbers beyond what was provided.'
         )
     ) AS narrative,
     CURRENT_TIMESTAMP() AS generated_at
@@ -208,7 +210,7 @@ SELECT
         'mistral-large2',
         CONCAT(
             'You are a WHO-style public health analyst. Write a 4-5 sentence global executive summary.\n\n',
-            'DATA (15 countries monitored):\n',
+            'DATA (14 countries monitored):\n',
             all_countries_summary, '\n\n',
             'TOTALS:\n',
             '- Global cases (last 30d): ', TO_VARCHAR(ROUND(global_cases_30d)), '\n',
@@ -281,7 +283,8 @@ ORDER BY CASE RISK_TIER WHEN 'HIGH' THEN 1 WHEN 'MODERATE' THEN 2 ELSE 3 END;
 CREATE OR REPLACE TABLE EXPLAINABILITY_NARRATIVES AS
 WITH top_features AS (
     SELECT
-        SERIES AS COUNTRY_REGION,
+        -- Strip quotes from SERIES (Snowflake ML wraps them in "")
+        REPLACE(SERIES, '"', '') AS COUNTRY_REGION,
         LISTAGG(
             CONCAT(RANK, '. ', FEATURE_NAME, ' (importance: ', TO_VARCHAR(ROUND(SCORE, 3)), ')'),
             '\n'
@@ -295,7 +298,7 @@ country_context AS (
         cs.COUNTRY_REGION,
         cs.RISK_TIER,
         cs.pct_change_30d,
-        cs.latest_7d_avg_cases,
+        cs.latest_7d_avg_cases, 
         cs.vacc_coverage_pct,
         tf.feature_list
     FROM MARTS.COUNTRY_STATS cs

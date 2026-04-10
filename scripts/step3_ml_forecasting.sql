@@ -27,49 +27,54 @@ USE SCHEMA MARTS;
 --  All NULLs replaced with 0
 -- ═══════════════════════════════════════════════
 
--- Use CASES_7D_AVG as target (smoother than raw NEW_CASES)
--- Filter to last 12 months only (recent patterns matter most for forecasting)
+-- ═══════════════════════════════════════════════
+--  FIX: Batch-reporting problem
+--  Many countries report weekly (76% zero days in Spain, 44% in Mexico)
+--  Raw daily values (NEW_CASES, DAILY_VACCINATIONS) are 0,0,0,0,0,0,SPIKE
+--  This confuses the model. Solution: use ONLY smoothed (7d avg) features.
+--  Also: drop Turkey (100% zero cases in training window).
+-- ═══════════════════════════════════════════════
+
 CREATE OR REPLACE VIEW ML_TRAINING_DATA AS
 SELECT
     COUNTRY_REGION,
     DATE,
     CASES_7D_AVG AS TARGET_CASES,
 
-    -- Tier 1: 0% NULLs — safe as-is
+    -- ALL exogenous features are smoothed (7d avg) to eliminate batch-reporting noise
     DEATHS_7D_AVG,
-    DAILY_VACCINATIONS,
+    COALESCE(VACC_7D_AVG, 0) AS VACC_7D_AVG,
     PEOPLE_FULLY_VACCINATED_PER_HUNDRED,
-    VACC_7D_AVG,
 
-    -- Tier 2: <2.5% NULLs — COALESCE to 0
+    -- Vaccination lags are already smooth (based on cumulative %)
     COALESCE(VACC_RATE_LAG_14D, 0) AS VACC_RATE_LAG_14D,
     COALESCE(VACC_RATE_LAG_21D, 0) AS VACC_RATE_LAG_21D,
     COALESCE(VACC_RATE_LAG_28D, 0) AS VACC_RATE_LAG_28D
 
-    -- DROPPED (data quality issues):
-    -- RECOVERY_RATE         → 58% NULLs (JHU stopped tracking mid-2021)
-    -- VACC_IMPACT_PROXY     → 36% NULLs (no data pre-vaccination)
-    -- DOUBLING_TIME_DAYS    → 69% outliers (values up to 1.6M days)
-    -- WOW_GROWTH_PCT        → extreme outliers (up to 117,000%)
-    -- WOW_CHANGE_7D_AVG     → 105 NULLs, correlated with CASES_7D_AVG
-    -- CASE_DEATH_RATIO      → 698 NULLs, outliers up to 7,350
+    -- DROPPED from this version:
+    -- DAILY_VACCINATIONS    → batch-reported (0,0,0,0,0,0,SPIKE) — use VACC_7D_AVG instead
+    -- All previously dropped features remain dropped
 
 FROM MARTS.FEATURES_ENGINEERED
 WHERE CASES_7D_AVG IS NOT NULL
   AND DATE >= DATEADD('month', -12, (SELECT MAX(DATE) FROM MARTS.FEATURES_ENGINEERED))
+  -- Drop Turkey: 100% zero cases in training window — nothing to learn
+  AND COUNTRY_REGION != 'Turkey'
 ORDER BY COUNTRY_REGION, DATE;
 
--- Verify: should be 17,145 rows, 10 columns, 0 NULLs
+-- Verify: 14 countries (Turkey dropped), ~5110 rows, 0 NULLs
 SELECT
     COUNT(*) AS total_rows,
     COUNT(DISTINCT COUNTRY_REGION) AS countries,
+    SUM(CASE WHEN TARGET_CASES IS NULL THEN 1 ELSE 0 END) AS null_target,
     SUM(CASE WHEN DEATHS_7D_AVG IS NULL THEN 1 ELSE 0 END) AS null_deaths_7d,
-    SUM(CASE WHEN DAILY_VACCINATIONS IS NULL THEN 1 ELSE 0 END) AS null_daily_vacc,
+    SUM(CASE WHEN VACC_7D_AVG IS NULL THEN 1 ELSE 0 END) AS null_vacc_7d,
+    SUM(CASE WHEN PEOPLE_FULLY_VACCINATED_PER_HUNDRED IS NULL THEN 1 ELSE 0 END) AS null_vacc_pct,
     SUM(CASE WHEN VACC_RATE_LAG_14D IS NULL THEN 1 ELSE 0 END) AS null_lag14,
     SUM(CASE WHEN VACC_RATE_LAG_21D IS NULL THEN 1 ELSE 0 END) AS null_lag21,
     SUM(CASE WHEN VACC_RATE_LAG_28D IS NULL THEN 1 ELSE 0 END) AS null_lag28
 FROM ML_TRAINING_DATA;
--- ALL should be 0. If not, STOP and investigate.
+-- ALL null counts should be 0, countries should be 14. If not, STOP.
 
 
 -- ═══════════════════════════════════════════════
@@ -96,9 +101,8 @@ SELECT
     COUNTRY_REGION,
     DATE,
     DEATHS_7D_AVG,
-    DAILY_VACCINATIONS,
-    PEOPLE_FULLY_VACCINATED_PER_HUNDRED,
     VACC_7D_AVG,
+    PEOPLE_FULLY_VACCINATED_PER_HUNDRED,
     VACC_RATE_LAG_14D,
     VACC_RATE_LAG_21D,
     VACC_RATE_LAG_28D
@@ -224,9 +228,8 @@ WITH last_known AS (
     SELECT
         COUNTRY_REGION,
         DEATHS_7D_AVG,
-        DAILY_VACCINATIONS,
-        PEOPLE_FULLY_VACCINATED_PER_HUNDRED,
         VACC_7D_AVG,
+        PEOPLE_FULLY_VACCINATED_PER_HUNDRED,
         VACC_RATE_LAG_14D,
         VACC_RATE_LAG_21D,
         VACC_RATE_LAG_28D
@@ -238,9 +241,8 @@ future_dates AS (
         lk.COUNTRY_REGION,
         DATEADD('day', seq.SEQ, (SELECT MAX(DATE) FROM ML_TRAINING_DATA)) AS DATE,
         lk.DEATHS_7D_AVG,
-        lk.DAILY_VACCINATIONS,
-        lk.PEOPLE_FULLY_VACCINATED_PER_HUNDRED,
         lk.VACC_7D_AVG,
+        lk.PEOPLE_FULLY_VACCINATED_PER_HUNDRED,
         lk.VACC_RATE_LAG_14D,
         lk.VACC_RATE_LAG_21D,
         lk.VACC_RATE_LAG_28D
@@ -249,7 +251,7 @@ future_dates AS (
 )
 SELECT * FROM future_dates;
 
--- Verify: 15 countries × 30 days = 450 rows, 0 NULLs
+-- Verify: 14 countries × 30 days = 420 rows (Turkey dropped), 0 NULLs
 SELECT COUNT(*) AS rows,
        COUNT(DISTINCT COUNTRY_REGION) AS countries,
        SUM(CASE WHEN DEATHS_7D_AVG IS NULL THEN 1 ELSE 0 END) AS any_nulls
@@ -283,12 +285,14 @@ WITH recent_actuals AS (
         f.CASES_7D_AVG AS ACTUAL_CASES,
         f.NEW_DEATHS AS ACTUAL_DEATHS,
         f.CASES_7D_AVG AS FORECASTED_CASES,
-        NULL AS FORECAST_LOWER,
-        NULL AS FORECAST_UPPER,
-        0 AS MAPE,
+        NULL::NUMBER AS FORECAST_LOWER,
+        NULL::NUMBER AS FORECAST_UPPER,
+        0::FLOAT AS MAPE,
         FALSE AS IS_FORECAST
     FROM MARTS.FEATURES_ENGINEERED f
     WHERE f.DATE >= DATEADD('day', -90, (SELECT MAX(DATE) FROM MARTS.FEATURES_ENGINEERED))
+      -- Exclude Turkey from actuals too (0 cases, pollutes dashboard)
+      AND f.COUNTRY_REGION != 'Turkey'
 ),
 forward_forecast AS (
     SELECT
